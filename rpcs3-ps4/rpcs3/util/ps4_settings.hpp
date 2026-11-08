@@ -322,9 +322,9 @@ public:
 
 private:
     enum class top_action { save, auto_switch, use_saved, back_to_auto, adapt, game_mode, safe_level, game_features, tab, apply_profile, reset, remove_game };
-    enum class ps4_row { players, online, upnp, cool, present_hold, audio_stretch, game_language, safe_mode };
+    enum class ps4_row { players, online, upnp, cool, present_hold, audio_stretch, game_language, safe_mode, start_vsh };
     static constexpr ps4_row ps4_rows[] = {ps4_row::players, ps4_row::online, ps4_row::upnp, ps4_row::cool, ps4_row::present_hold,
-        ps4_row::audio_stretch, ps4_row::game_language, ps4_row::safe_mode};
+        ps4_row::audio_stretch, ps4_row::game_language, ps4_row::safe_mode, ps4_row::start_vsh};
     // A top-level action that changes files only after a second X on the same row
     enum class pending_action { none, back_to_auto, convert, remove_game, use_saved };
     // A list edit waiting for its warning's confirmation: X on the same row confirms it and repeats the edit
@@ -357,6 +357,7 @@ private:
     int m_players_connected = -1;                     // -1 = unknown
     bool m_present_hold = false;                      // present-hold-ms.txt state, read by open() and the switch
     bool m_audio_stretch = false;                     // automatic audio continuity (audio-continuity.flag, 0.40: off by default)
+    bool m_start_vsh_requested = false;               // launch the firmware's real PS3 VSH/XMB from the native launcher
     // 'Idioma dos jogos': the global choice and, in a game's menu, the game's own (nullopt = follows the global)
     std::int32_t m_game_language_global = game_language_auto;
     std::optional<std::int32_t> m_game_language_game;
@@ -745,6 +746,7 @@ private:
         case ps4_row::game_language: return entry(game_language_title(), i18n::tr(str::GL_HELP_GLOBAL));
         // The state open() and refresh_runtime() read (no stat per frame)
         case ps4_row::safe_mode: return entry(safe_mode_rows::global_title(m_inputs.global_safe), safe_mode_rows::global_help());
+        case ps4_row::start_vsh: return entry(i18n::tr(str::SET_XMB_PS3_TITLE), i18n::tr(str::SET_XMB_PS3_HELP));
         }
         return entry({}, {});
     }
@@ -786,6 +788,10 @@ private:
             if (event.empty()) return false;
             m_event = std::move(event);
             refresh_runtime();
+            return false;
+        case ps4_row::start_vsh:
+            m_start_vsh_requested = true;
+            message = i18n::tr(str::SET_XMB_PS3_BOOTING);
             return false;
         }
         return false;
@@ -1111,6 +1117,7 @@ public:
         m_selection = 0;
         m_pending = pending_action::none;
         m_retry.reset();
+        m_start_vsh_requested = false;
         m_show_hidden = false;
         m_list.clear();
     }
@@ -1133,6 +1140,7 @@ public:
     }
     // A line for startup.log after an action that changed files without closing the menu (empty if none).
     std::string take_event() { return std::exchange(m_event, std::string{}); }
+    bool take_start_vsh_request() { return std::exchange(m_start_vsh_requested, false); }
 
     std::size_t& selection() { return m_selection; }
 
