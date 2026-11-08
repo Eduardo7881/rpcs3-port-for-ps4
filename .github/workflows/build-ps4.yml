@@ -159,6 +159,7 @@ jobs:
             ${{ runner.os }}-llvm-ca7933e47d3a3451d81e72ac174dcb5aa28b59d1-openorbis-054-llvm-mingw-20240619-
 
       - name: Build console LLVM
+        id: build_llvm
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -167,7 +168,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Console LLVM build failed' }
 
       - name: Save console LLVM build cache
-        if: always()
+        if: steps.build_llvm.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: |
