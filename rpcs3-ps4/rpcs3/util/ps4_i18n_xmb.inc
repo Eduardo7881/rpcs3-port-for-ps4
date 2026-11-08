@@ -252,3 +252,9 @@ I18N(GL_NAME_16, "Polonês", "Polish", "Polaco", "البولندية")
 I18N(GL_NAME_17, "Português (Brasil)", "Portuguese (Brazil)", "Portugués (Brasil)", "البرتغالية (البرازيل)")
 I18N(GL_NAME_18, "Inglês (Reino Unido)", "English (UK)", "Inglés (Reino Unido)", "الإنجليزية (المملكة المتحدة)")
 I18N(GL_NAME_19, "Turco", "Turkish", "Turco", "التركية")
+
+// Launching the real PS3 shell (vsh.self), not the port's native XMB.
+I18N(SET_XMB_PS3_TITLE, "Iniciar XMB do PS3", "Boot real PS3 XMB", "Iniciar XMB real de PS3", "بدء XMB الحقيقي لـ PS3")
+I18N(SET_XMB_PS3_HELP, "X inicia a XMB original do firmware do PS3 (VSH). Requer firmware instalado.", "X boots the original PS3 firmware XMB (VSH). Installed firmware is required.", "X inicia la XMB original del firmware de PS3 (VSH). Requiere firmware instalado.", "X لتشغيل XMB الأصلي لبرنامج PS3 (VSH). يتطلب تثبيت البرنامج الثابت.")
+I18N(SET_XMB_PS3_FIRMWARE_REQUIRED, "Instale um firmware do PS3 antes de iniciar a XMB original.", "Install PS3 firmware before starting the original XMB.", "Instala el firmware de PS3 antes de iniciar la XMB original.", "ثبّت برنامج PS3 الثابت قبل بدء XMB الأصلي.")
+I18N(SET_XMB_PS3_BOOTING, "Iniciando a XMB original do PS3...", "Starting the original PS3 XMB...", "Iniciando la XMB original de PS3...", "جارٍ بدء XMB الأصلي لـ PS3...")
