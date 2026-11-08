@@ -7945,6 +7945,45 @@ std::string ps4_select_game(const std::string& preferred, const std::string& err
                     settings_open = false;
                     ps4_startup_checkpoint(message.c_str());
                 }
+                // The PS4 settings page can hand the real firmware VSH back to the normal BootGame path. This is
+                // deliberately separate from the native XMB scene: the native launcher remains available on return.
+                if (settings.take_start_vsh_request())
+                {
+                    const std::string vsh_path = firmware_dev_flash + "/vsh/module/vsh.self";
+                    if (rpcn_busy)
+                    {
+                        message = i18n::tr(str::LAU_RPCN_AGUARDE_OPERACAO);
+                    }
+                    else if (download_thread)
+                    {
+                        message = i18n::tr(str::LAU_PATCH_AGUARDE_DOWNLOAD_CANCELA);
+                    }
+                    else if (cache_clear_busy || config_db_busy)
+                    {
+                        message = i18n::tr(cache_clear_busy ? str::LAU_CACHE_AGUARDE_LIMPEZA : str::LAU_CONFIGDB_AGUARDE_IMPORTACAO);
+                    }
+                    else if (firmware_job)
+                    {
+                        message = i18n::tr(firmware_job->kind == firmware::task::install ? str::COM_AGUARDE_INSTALACAO_FIRMWARE_TERMINAR_INSTALAR
+                            : firmware_job->kind == firmware::task::check ? str::LAU_FIRMWARE_AGUARDE_VERIFICACAO
+                            : str::COM_AGUARDE_REMOVENDO_RESTOS_INSTALACAO_ANTERIOR);
+                    }
+                    else if (disc_ui::running(disc_job))
+                    {
+                        message = disc_ui::boot_refused_text();
+                    }
+                    else if (!firmware_state.ready() || !fs::is_file(vsh_path))
+                    {
+                        message = i18n::tr(str::SET_XMB_PS3_FIRMWARE_REQUIRED);
+                        ps4_startup_checkpoint("XMB: real PS3 VSH boot refused; usable PS3 firmware or vsh.self is missing");
+                    }
+                    else
+                    {
+                        ps4_startup_checkpoint(fmt::format("XMB: launching the original PS3 firmware VSH from '%s'", vsh_path).c_str());
+                        return vsh_path;
+                    }
+                    settings_dirty = true;
+                }
                 // 0.29: the automatic-configuration switch and 'Voltar para automático' change files without
                 // closing the menu; record them too.
                 if (const std::string event = settings.take_event(); !event.empty()) record_settings_line(event);
