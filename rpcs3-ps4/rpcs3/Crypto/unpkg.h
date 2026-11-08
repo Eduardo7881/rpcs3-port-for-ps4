@@ -395,6 +395,8 @@ public:
 
 	// Install folder (".../dev_hdd0/<kind>/<dir>/"), set by extract_data; empty before
 	const std::string& get_install_path() const { return m_install_path; }
+	// Resolve the package's destination without extracting it; used to skip already-installed imports.
+	bool prepare_install_path() { return set_install_path(); }
 
 	// First failure of extract_data: what, the file involved and the file system error. Read after it returned.
 	struct ps4_failure_info

@@ -79,6 +79,8 @@ using i18n::str;
 
 namespace
 {
+std::vector<std::string> pending_import_pkgs();
+
 // Zero-initialized state, usable while the original RPCS3 constructors run.
 std::atomic<unsigned int> s_memory_trace_count{0};
 std::atomic<bool> s_main_entered{false};
@@ -4844,6 +4846,8 @@ std::string ps4_select_game(const std::string& preferred, const std::string& err
             {"@configdb:import", i18n::tr(str::LAU_IMPORTAR_CONFIG_DATABASE), config_db::row_help(), "item_tex_disc_install", {}},
             // 0.33: PS3UPDAT.PUP from USB or /data/rpcs3, as 'Install Firmware' of the PC build
             {"@firmware:install", i18n::tr(str::LAU_INSTALAR_FIRMWARE_PS3), firmware_row_help(firmware_state), "item_tex_disc_install", {}},
+            // Install complete PS3 PKGs placed in the import folder, skipping content already present in dev_hdd0.
+            {"@pkgs:import", "Install pending PS3 PKGs", "Install uninstalled PS3 .pkg files from /data/rpcs3/import", "item_tex_disc_install", {}},
             {"@exit", i18n::tr(str::LAU_SAIR_RPCS3), "", "tex_user", {}}};
     };
     columns[1] = settings_column();
@@ -8207,6 +8211,39 @@ std::string ps4_select_game(const std::string& preferred, const std::string& err
             return std::nullopt;
         }
         if (path == "@firmware:install") { firmware_select(); return std::nullopt; }
+        if (path == "@pkgs:import")
+        {
+            if (!Emu.IsStopped(true))
+            {
+                message = i18n::tr(str::COM_JOGO_ANTERIOR_AINDA_ESTA_FECHANDO);
+                return std::nullopt;
+            }
+
+            const std::vector<std::string> packages = pending_import_pkgs();
+            if (packages.empty())
+            {
+                message = "No uninstalled PS3 PKGs found in /data/rpcs3/import";
+                return std::nullopt;
+            }
+
+            std::size_t installed = 0;
+            for (const std::string& package : packages)
+            {
+                const ps4_install_result result = ps4_install_packages({package}, false);
+                if (!result.ok)
+                {
+                    message = result.message.empty() ? "PKG installation stopped" : result.message;
+                    break;
+                }
+                ++installed;
+            }
+
+            if (installed == packages.size())
+                message = fmt::format("Installed %u of %u pending PS3 PKG(s)", static_cast<unsigned>(installed), static_cast<unsigned>(packages.size()));
+
+            refresh_library(true);
+            return std::nullopt;
+        }
         if (path.starts_with("@patch:")) { toggle_patch(row_index(path, "@patch:")); return std::nullopt; }
         // Cheats: the first row of the patch list opens the game's list; in it X switches a cheat, adds one, imports
         if (path == "@cheats:open") { open_cheats(patch_game, true); return std::nullopt; }
@@ -9281,6 +9318,72 @@ bool disc_package_path(std::string_view path)
 {
     return path.find("/PS3_GAME/INSDIR/") != std::string_view::npos || path.find("/PS3_GAME/PKGDIR/") != std::string_view::npos ||
         path.find("/PS3_EXTRA/") != std::string_view::npos;
+}
+
+// Packages are installed on the XMB thread: ps4_install_packages owns the PS3 system dialog and polls the pads.
+std::vector<std::string> pending_import_pkgs()
+{
+    namespace pkg = utils::ps4::pkg;
+    constexpr char import_dir[] = "/data/rpcs3/import";
+    std::vector<std::string> pending;
+    fs::dir directory(import_dir);
+    if (!directory) return pending;
+
+    for (const fs::dir_entry& entry : directory)
+    {
+        if (entry.is_directory || entry.name.size() < 4) continue;
+        if (!std::equal(entry.name.end() - 4, entry.name.end(), ".pkg",
+            [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; }))
+            continue;
+
+        const std::string path = std::string(import_dir) + "/" + entry.name;
+        if (!check_package_file(path).ready()) continue;
+
+        package_reader reader(path);
+        if (!reader.is_valid() || !reader.prepare_install_path()) continue;
+
+        const auto& package_sfo = reader.get_psf();
+        const std::string category(psf::get_string(package_sfo, "CATEGORY", ""));
+        const std::string title_id(psf::get_string(package_sfo, "TITLE_ID", ""));
+        const std::string target = reader.get_install_path();
+        bool installed = false;
+
+        if (category == "GD" && !title_id.empty())
+        {
+            const std::string installed_sfo_path = rpcs3::utils::get_hdd0_dir() + "game/" + title_id + "/PARAM.SFO";
+            if (fs::is_file(installed_sfo_path))
+            {
+                const auto installed_sfo = psf::load_object(installed_sfo_path);
+                const std::string installed_id(psf::get_string(installed_sfo, "TITLE_ID", ""));
+                const std::string installed_version(psf::get_string(installed_sfo, "APP_VER", ""));
+                const std::string package_version(psf::get_string(package_sfo, "APP_VER", ""));
+                if (installed_id == title_id && !installed_version.empty() && !package_version.empty())
+                {
+                    const auto order = pkg::compare_versions(installed_version, package_version);
+                    installed = order ? *order >= 0 : installed_version == package_version;
+                }
+            }
+        }
+        else if (reader.get_metadata().content_type == PKG_CONTENT_TYPE_LICENSE)
+        {
+            const PKGHeader& pkg_header = reader.get_header();
+            const std::string content_id(pkg_header.title_id, ::strnlen(pkg_header.title_id, sizeof(pkg_header.title_id)));
+            installed = fs::is_file(target + content_id + ".rif") || fs::is_file(target + content_id + ".rap");
+        }
+        else if (category == "HG" || reader.get_metadata().content_type == PKG_CONTENT_TYPE_GAME_EXEC)
+        {
+            installed = fs::is_file(target + "USRDIR/EBOOT.BIN");
+        }
+        else
+        {
+            installed = fs::is_file(target + "PARAM.SFO");
+        }
+
+        if (!installed) pending.emplace_back(path);
+    }
+
+    std::sort(pending.begin(), pending.end());
+    return pending;
 }
 }
 
