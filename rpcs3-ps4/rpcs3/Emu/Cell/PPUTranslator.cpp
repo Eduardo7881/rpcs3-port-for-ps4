@@ -109,55 +109,58 @@ PPUTranslator::PPUTranslator(LLVMContext& context, Module* _module, const ppu_mo
 	m_md_likely = MDTuple::get(m_context, {md_name, md_high, md_low});
 	m_md_unlikely = MDTuple::get(m_context, {md_name, md_low, md_high});
 
-	// Sort relevant relocations (TODO)
-	const auto caddr = m_info.segs[0].addr;
-	const auto cend = caddr + m_info.segs[0].size;
-
-	for (const auto& rel : m_info.get_relocs())
+	// The translator only visits functions in this fragment's local_bounds. Restrict the relocation
+	// lookup to that range instead of rescanning every relocation in the parent executable for each
+	// fragment (large PRX/SELF files can otherwise repeat the same full-table walk hundreds of times).
+	const auto relocations = m_info.get_relocs(true);
+	m_relocs.reserve(relocations.size());
+	for (const auto& rel : relocations)
 	{
-		if (rel.addr >= caddr && rel.addr < cend)
+		// Check relocation type
+		switch (rel.type)
 		{
-			// Check relocation type
-			switch (rel.type)
-			{
+		// Ignore relative relocations, they are handled in emitted code
+		// Comment out types we haven't confirmed as used and working
+		case 10:
+		case 11:
+		// case 12:
+		// case 13:
+		// case 26:
+		// case 28:
+		{
+			ppu_log.notice("Ignoring relative relocation at 0x%x (%u)", rel.addr, rel.type);
+			continue;
+		}
+		// Ignore 64-bit relocations
+		case 20:
+		case 22:
+		case 38:
+		case 43:
+		case 44:
+		case 45:
+		case 46:
+		case 51:
+		case 68:
+		case 73:
+		case 78:
+		{
+			ppu_log.error("Ignoring 64-bit relocation at 0x%x (%u)", rel.addr, rel.type);
+			continue;
+		}
+		default: break;
+		}
 
-			// Ignore relative relocations, they are handled in emitted code
-			// Comment out types we haven't confirmed as used and working
-			case 10:
-			case 11:
-			// case 12:
-			// case 13:
-			// case 26:
-			// case 28:
-			{
-				ppu_log.notice("Ignoring relative relocation at 0x%x (%u)", rel.addr, rel.type);
-				continue;
-			}
-
-			// Ignore 64-bit relocations
-			case 20:
-			case 22:
-			case 38:
-			case 43:
-			case 44:
-			case 45:
-			case 46:
-			case 51:
-			case 68:
-			case 73:
-			case 78:
-			{
-				ppu_log.error("Ignoring 64-bit relocation at 0x%x (%u)", rel.addr, rel.type);
-				continue;
-			}
-			default: break;
-			}
-
-			// Align relocation address (TODO)
-			if (!m_relocs.emplace(rel.addr & ~3, &rel).second)
-			{
-				ppu_log.error("Relocation repeated at 0x%x (%u)", rel.addr, rel.type);
-			}
+		// Relocations are already sorted by address. Keep the first relocation at each aligned
+		// instruction address, matching the previous std::map::emplace behavior without per-node
+		// allocations or tree rebalancing.
+		const u64 aligned_addr = rel.addr & ~3u;
+		if (!m_relocs.empty() && m_relocs.back().first == aligned_addr)
+		{
+			ppu_log.error("Relocation repeated at 0x%x (%u)", rel.addr, rel.type);
+		}
+		else
+		{
+			m_relocs.emplace_back(aligned_addr, &rel);
 		}
 	}
 
@@ -269,26 +272,33 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 	// Process blocks
 	const auto block = std::make_pair(info.addr, info.size);
 	{
+		// The function's instruction bytes are contiguous. Resolve the segment once rather than
+		// performing an ordered-map lookup for every 4-byte PPU instruction.
+		auto* instructions = ensure(m_info.get_ptr<u32>(block.first, block.second));
+
 		// Optimize BLR (prefetch LR)
-		if (*ensure(m_info.get_ptr<u32>(block.first + block.second - 4)) == ppu_instructions::BLR())
+		if (instructions[block.second / sizeof(u32) - 1] == ppu_instructions::BLR())
 		{
 			RegLoad(m_lr);
 		}
 
+		// Relocations and instructions are both walked in ascending address order. Find the first
+		// relocation for this function once, then advance the cursor alongside the instruction pointer.
+		auto rel_it = std::lower_bound(m_relocs.begin(), m_relocs.end(), block.first,
+			[](const auto& entry, u32 addr) { return entry.first < addr; });
+
 		// Process the instructions
-		for (m_addr = block.first - base; m_addr < block.first + block.second - base; m_addr += 4)
+		for (m_addr = block.first - base; m_addr < block.first + block.second - base; m_addr += 4, ++instructions)
 		{
 			if (llvm_has_terminator(m_ir->GetInsertBlock()))
 			{
 				break;
 			}
 
-			// Find the relocation at current address
-			const auto rel_found = m_relocs.find(m_addr + base);
-
-			if (rel_found != m_relocs.end())
+			// Find the relocation at the current instruction address without a tree lookup.
+			if (rel_it != m_relocs.end() && rel_it->first == m_addr + base)
 			{
-				m_rel = rel_found->second;
+				m_rel = (rel_it++)->second;
 			}
 			else
 			{
@@ -298,14 +308,14 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 			// Reset MMIO hint
 			m_may_be_mmio = true;
 
-			const u32 op = *ensure(m_info.get_ptr<u32>(::narrow<u32>(m_addr + base)));
+			const u32 op = *instructions;
 
 			(this->*(s_ppu_decoder.decode(op)))({op});
 
 			if (m_rel)
 			{
 				// This is very bad. m_rel is normally set to nullptr after a relocation is handled (so it wasn't)
-				ppu_log.error("LLVM: [0x%x] Unsupported relocation(%u) in '%s' (opcode=0x%x '%s'). Please report.", rel_found->first, m_rel->type, m_info.name, op, g_ppu_iname.decode(op));
+				ppu_log.error("LLVM: [0x%x] Unsupported relocation(%u) in '%s' (opcode=0x%x '%s'). Please report.", m_addr + base, m_rel->type, m_info.name, op, g_ppu_iname.decode(op));
 				return nullptr;
 			}
 		}
@@ -364,7 +374,7 @@ Function* PPUTranslator::GetSymbolResolver(const ppu_module<lv2_obj>& info)
 			continue;
 		}
 
-		if (std::count(info.excluded_funcs.begin(), info.excluded_funcs.end(), f.addr))
+		if (std::binary_search(info.excluded_funcs.begin(), info.excluded_funcs.end(), f.addr))
 		{
 			// Excluded function (possibly patched)
 			continue;

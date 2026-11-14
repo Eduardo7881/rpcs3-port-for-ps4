@@ -8,6 +8,9 @@
 
 #include "util/types.hpp"
 
+#include <utility>
+#include <vector>
+
 template <typename T>
 struct ppu_module;
 
@@ -18,8 +21,8 @@ class PPUTranslator final : public cpu_translator
 	// PPU Module
 	const ppu_module<lv2_obj>& m_info;
 
-	// Relevant relocations
-	std::map<u64, const ppu_reloc*> m_relocs;
+	// Relevant relocations, ordered by address for sequential instruction translation.
+	std::vector<std::pair<u64, const ppu_reloc*>> m_relocs;
 
 	// Attributes for function calls which are "pure" and may be optimized away if their results are unused
 	const llvm::AttributeList m_pure_attr;

@@ -6128,7 +6128,8 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 					continue;
 				}
 
-				if (std::count(part.excluded_funcs.begin(), part.excluded_funcs.end(), func.addr))
+				// The initial exclusions are appended while walking the address-sorted function list.
+				if (std::binary_search(part.excluded_funcs.begin(), part.excluded_funcs.end(), func.addr))
 				{
 					continue;
 				}
@@ -6255,6 +6256,11 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				local_jit_bounds = std::make_shared<std::pair<u32, u32>>(u32{umax}, 0);
 			}
 
+			// Both the fragment scan and the symbol-resolver scan can add exclusions. Canonicalize once
+			// so the translator and JIT setup can test membership with binary_search.
+			std::sort(part.excluded_funcs.begin(), part.excluded_funcs.end());
+			part.excluded_funcs.erase(std::unique(part.excluded_funcs.begin(), part.excluded_funcs.end()), part.excluded_funcs.end());
+
 			if (false)
 			{
 				const be_t<u64> forced_upd = 3;
@@ -6310,8 +6316,13 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 			if (g_cfg.core.set_daz_and_ftz)
 				settings += ppu_settings::daz_and_ftz;
 
-			// Write version, hash, CPU, settings
+			// The PS4 codegen level is changed to Default in JITLLVM.cpp. Use a new cache
+			// namespace so modules produced with the previous Aggressive backend are not reused.
+#ifdef RPCS3_PS4
+			fmt::append(obj_name, "v9-kusa-%s-%s-%s.obj", fmt::base57(output, 16), fmt::base57(settings), jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string()));
+#else
 			fmt::append(obj_name, "v8-kusa-%s-%s-%s.obj", fmt::base57(output, 16), fmt::base57(settings), jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string()));
+#endif
 		}
 
 		if (cpu ? cpu->state.all_of(cpu_flag::exit) : Emu.IsStopped())
@@ -7019,7 +7030,7 @@ static void ppu_initialize2(jit_compiler& jit, const ppu_module<lv2_obj>& module
 	{
 		if (func.size)
 		{
-			if (std::count(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), func.addr))
+			if (std::binary_search(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), func.addr))
 			{
 				continue;
 			}
@@ -7079,7 +7090,7 @@ static void ppu_initialize2(jit_compiler& jit, const ppu_module<lv2_obj>& module
 
 			if (mod_func.size)
 			{
-				if (std::count(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), mod_func.addr))
+				if (std::binary_search(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), mod_func.addr))
 				{
 					continue;
 				}

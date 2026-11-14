@@ -1140,7 +1140,13 @@ jit_compiler::jit_compiler(const std::unordered_map<std::string, u64>& _link, st
 			.setErrorStr(&result)
 			.setEngineKind(llvm::EngineKind::JIT)
 			.setMCJITMemoryManager(std::move(mem))
-			.setOptLevel(llvm::CodeGenOptLevel::Aggressive)
+			.setOptLevel(
+#ifdef RPCS3_PS4
+				llvm::CodeGenOptLevel::Default
+#else
+				llvm::CodeGenOptLevel::Aggressive
+#endif
+			)
 			.setCodeModel(flags & 0x2 ? llvm::CodeModel::Large : llvm::CodeModel::Small)
 #ifdef __APPLE__
 			//.setCodeModel(llvm::CodeModel::Large)
